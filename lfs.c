@@ -35,7 +35,6 @@ typedef struct SuperNode {
     int32_t filenum;
     int32_t usedblock;
     int32_t pos;                        // 记录每次查找空余块位置
-
 }SuperNode;
 SuperNode *SNode;    // 超级节点，存放在 mem[0] 地址
 
@@ -45,9 +44,7 @@ int bitmap[BLOCK_NR];           // 记录 mem 使用情况
 static filenode *root = NULL;   // 根节点
 
 void *lfs_malloc(int block_num) {       // 给节点分配空间，block_num 为需要分配的 mem块
-    printf("in lfs_malloc %d\n", ttt++);
     if(bitmap[block_num]) {        // 判断该 mem 块是否为空，本实验中因就在内存中实现，故未通过实现 bitmap 来进行判断该块是否有数据
-        printf("usedblock: %d\n", SNode->usedblock);
         printf("malloc error: not empty block!\n");
         return (void *)-1;
     }
@@ -61,43 +58,32 @@ void *lfs_malloc(int block_num) {       // 给节点分配空间，block_num 为
 }
 
 int lfs_free_inode(INode *inode, int flag) {    // 释放空间
-    printf("in lfs_free_inode\n");
     int stat = flag;        // 记录当前 inode 节点是否需要释放
     if(inode->next)         // 如果有下个 inode，进行递归操作
         lfs_free_inode(inode->next, 0);
     for(; flag < DATA_BLOCKS_NUM; flag++) {
-        printf("inode-datablock: %d\n", inode->Data_block[flag]);
         if(inode->Data_block[flag] == -1) {
             break;
         }
         munmap(mem[inode->Data_block[flag]], BLOCK_SIZE);   // 释放数据块
         bitmap[inode->Data_block[flag]] = 0;
         inode->Data_block[flag] = -1;   // 释放掉的数据块索引为 -1
-        printf("usedblock: %d\n", SNode->usedblock);
         SNode->usedblock--;     // 记录已用块数减一
     }
-    printf("before if, stat: %d\n", stat);
     if(stat == 0) {         // 如果从第零块开始就释放，则该 inode 节点也需要进行释放
-        printf("inode->blocknum: %d\n", inode->block_num);
         bitmap[inode->block_num] = 0;
         munmap(mem[inode->block_num], BLOCK_SIZE);      // 释放 inode 节点空间
-        printf("1\n");
-        printf("free inode usedblock: %d\n", SNode->usedblock);
     }
     return 0;
 }
 
 int lfs_find_free_block() {     // 查找未被分配空间块 mem
-    printf("in find_free_block\n");
     int i = pos;
     int count = 0;
-    printf("i: %d, pos: %d, count: %d\n", i, pos, count);
     while(bitmap[i] && count < BLOCK_NR) {      // 同上，因在内存中实现，故未用 bitmap，仅根据 mem 有无进行判断
-        printf("i: %d, bitmap: %d\n", i, bitmap[i]);
         i = (i + 1) % BLOCK_NR;
         count++;
     }
-    printf("i: %d, count: %d\n", i, count);
     if(!bitmap[i]) {      // 如果找到且 i < BLOCK_NR 就返回位置
         pos = i;
         return i;
@@ -117,10 +103,8 @@ static struct filenode *get_filenode(const char *name) {    // 找到文件节�
 }
 
 static void create_filenode(const char *filename, const struct stat *st) {  //创建文件
-    printf("in create_filenode\n");
     filenode *new;
     int block_num = lfs_find_free_block();      // 找到空余 mem 块
-    printf("block_num: %d\n", block_num);
     if(block_num == -1)         // 无空余块，直接结束
         return;
     new = (filenode *)lfs_malloc(block_num);    // 为新文件节点分配空间
@@ -192,11 +176,9 @@ static int lfs_getattr(const char *path, struct stat *stbuf) {  // 与示例程�
 static int lfs_readdir(const char *path, void *buf, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi) {
     // 于示例程序相同
     filenode *node = root->next;
-    //printf("using lfs_readdir %d\n", ttt++);
     filler(buf, ".", NULL, 0);
     filler(buf, "..", NULL, 0);
     while(node) {
-        //puts(node->filename);
         filler(buf, node->filename, node->st, 0);
         node = node->next;
     }
@@ -405,7 +387,8 @@ static int lfs_read(const char *path, char *buf, size_t size, off_t offset, stru
 static int lfs_unlink(const char *path) {
     filenode *node = get_filenode(path);
     if(lfs_free_inode(node->inode, 0)) {    // 从当前文件节点的第一个 inode 开始释放
-        exit(-1);
+        printf("unlink error!\n");
+        return -1;
     }
     node->last->next = node->next;
     if(node->next)
