@@ -78,14 +78,14 @@ int lfs_free_inode(INode *inode, int flag) {    // 释放空间
 }
 
 int lfs_find_free_block() {     // 查找未被分配空间块 mem
-    int i = pos;
+    int i = SNode->pos;
     int count = 0;
     while(bitmap[i] && count < BLOCK_NR) {      // 同上，因在内存中实现，故未用 bitmap，仅根据 mem 有无进行判断
         i = (i + 1) % BLOCK_NR;
         count++;
     }
     if(!bitmap[i]) {      // 如果找到且 i < BLOCK_NR 就返回位置
-        pos = i;
+        SNode->pos = i;
         return i;
     }
     return -1;         // 否则返回 -1
@@ -102,11 +102,11 @@ static struct filenode *get_filenode(const char *name) {    // 找到文件节�
     return NULL;
 }
 
-static void create_filenode(const char *filename, const struct stat *st) {  //创建文件
+static int create_filenode(const char *filename, const struct stat *st) {  //创建文件
     filenode *new;
     int block_num = lfs_find_free_block();      // 找到空余 mem 块
-    if(block_num == -1)         // 无空余块，直接结束
-        return;
+    if(block_num == -1)         // 无空余块，返回 -1
+        return -1;
     new = (filenode *)lfs_malloc(block_num);    // 为新文件节点分配空间
     new->block_num = block_num;
     memcpy(new->filename, filename, strlen(filename) + 1);
@@ -115,6 +115,8 @@ static void create_filenode(const char *filename, const struct stat *st) {  //�
     memcpy(new->st, st, sizeof(struct stat));
     new->offset += sizeof(struct stat);
     int inode_block_num = lfs_find_free_block();
+    if(inode_block_num == -1)
+        return -1;
     new->inode = (INode *)lfs_malloc(inode_block_num);      // 为第一个 inode 分配空间
     new->inode->block_num = inode_block_num;        // 记录所在 mem 块数
     new->inode->next = NULL;
@@ -126,6 +128,7 @@ static void create_filenode(const char *filename, const struct stat *st) {  //�
     root->next = new;
     new->last = root;
     SNode->filenum++;           // 文件数加一
+    return 0;
 }
 
 static void *lfs_init(struct fuse_conn_info *conn) {    // 初始化，与实例程序基本相同
@@ -195,7 +198,9 @@ static int lfs_mknod(const char *path, mode_t mode, dev_t dev) {
     st.st_size = 0;
     st.st_blksize = BLOCK_SIZE;
     st.st_blocks = 0;
-    create_filenode(path + 1, &st);
+    int flag = create_filenode(path + 1, &st);
+    if(flag == -1)              // 空间不够，创建文件失败
+        return -ENOSPC;
     return 0;
 }
 
@@ -206,7 +211,6 @@ static int lfs_open(const char *path, struct fuse_file_info *fi) {      // 与�
 static int lfs_write(const char *path, const char *buf, size_t size, off_t offset, struct fuse_file_info *fi) {
     // 写入函数
     long temp = ((long)BLOCK_NR - (long)SNode->usedblock) * (long)BLOCK_SIZE;
-    printf("temp: %ld, usedblock: %d\n", temp, SNode->usedblock);
     if((long)size > temp) {             // 判断是否还有空间进行写入
         printf("No space to write\n");
         return -ENOSPC;                 // 没有空间返回 -ENOSPC
@@ -228,7 +232,7 @@ static int lfs_write(const char *path, const char *buf, size_t size, off_t offse
         if(inode->next == NULL) {       // 恰好为一 inode 节点末尾，则需开辟新的 inode 节点
             int new_inode = lfs_find_free_block();
             inode->next = (INode *)lfs_malloc(new_inode);
-            if ((int)inode->next == -1)
+            if (inode->next == (INode *)-1)
                 return -ENOSPC;
             for(int k = 0; k < DATA_BLOCKS_NUM; k++)
                 inode->next->Data_block[k] = -1;
@@ -245,7 +249,7 @@ static int lfs_write(const char *path, const char *buf, size_t size, off_t offse
     else {          // 当前位置数据块无空间，则需要申请新的空间
         int fr_block = lfs_find_free_block();
         data_node = (Data *)lfs_malloc(fr_block);
-        if((int)data_node == -1)
+        if(data_node == (Data *)-1)
             return -ENOSPC;
         inode->Data_block[used_block] = fr_block;       // 记录新空间块数
     }
@@ -265,7 +269,7 @@ static int lfs_write(const char *path, const char *buf, size_t size, off_t offse
         if(used_block == 0) {       // 一个 inode 用完，申请新的 inode
             free_block = lfs_find_free_block();
             inode->next = (INode *)lfs_malloc(free_block);
-            if((int)inode->next == -1)
+            if(inode->next == (INode *)-1)
                 return -ENOSPC;
             inode = inode->next;
             inode->block_num = free_block;
@@ -275,7 +279,7 @@ static int lfs_write(const char *path, const char *buf, size_t size, off_t offse
         }
         free_block = lfs_find_free_block();
         data_node = (Data *)lfs_malloc(free_block);     // 申请数据块
-        if((int)inode->next == -1)
+        if(data_node == (Data *)-1)
             return -ENOSPC;
         inode->Data_block[used_block] = free_block;
         if(rest_size < BLOCK_SIZE) {                    // 剩余量小于一块的大小
