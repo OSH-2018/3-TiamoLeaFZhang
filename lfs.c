@@ -225,11 +225,22 @@ static int lfs_write(const char *path, const char *buf, size_t size, off_t offse
     int off = (int)offset % BLOCK_SIZE;             // 确定一块中的偏移量
     int used_inode = used_block / DATA_BLOCKS_NUM;      // 确定偏移量跳过多少 inode
     used_block = used_block % DATA_BLOCKS_NUM;      // 偏移量所确定的 inode 中块的位置
+    int jump_block = 0;             // 记录跳过的空数据块
     int i = 0;
     int rest_size = (int)size;      // 记录剩余待写量
     INode *inode = node->inode;
+    Data *jump_node;                // 跳过的数据块
     for(i = 0; i < used_inode; i++) {       // 跳转到待写 inode
         if(inode->next == NULL) {       // 恰好为一 inode 节点末尾，则需开辟新的 inode 节点
+            for(int k = 0; k < DATA_BLOCKS_NUM; k++)
+                if(inode->Data_block[k] == -1) {        // 将跳过的未分配的空间分配为 0
+                    jump_block = lfs_find_free_block();
+                    jump_node = (Data *)mem[jump_block];
+                    jump_node = (Data *)lfs_malloc(jump_block);
+                    if(jump_node == (Data *)-1)
+                        return -ENOSPC;
+                    inode->Data_block[k] = jump_block;
+                }
             int new_inode = lfs_find_free_block();
             inode->next = (INode *)lfs_malloc(new_inode);
             if (inode->next == (INode *)-1)
@@ -240,6 +251,19 @@ static int lfs_write(const char *path, const char *buf, size_t size, off_t offse
             inode->next->block_num = new_inode;
         }
         inode = inode->next;
+    }
+
+    if(used_block != 0) {
+        for(int k = 0; k < used_block; k++) {
+            if(inode->Data_block[k] == -1) {
+                jump_block = lfs_find_free_block();
+                jump_node = (Data *)mem[jump_block];
+                jump_node = (Data *)lfs_malloc(jump_block);
+                if(jump_node == (Data *)-1)
+                    return -ENOSPC;
+                inode->Data_block[k] = jump_block; 
+            }
+        }
     }
 
     Data *data_node;        // 数据块
